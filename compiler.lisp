@@ -60,8 +60,9 @@
              ,@(mapcar (lambda (byte-spec arg) `(setf (ldb ,byte-spec byte) ,arg))
                        byte-specs args)
              byte))
-         (defun ,emitter-name (segment ,@args)
-           (emit-byte segment (,name ,@args)))))))
+         ,@(when emitter-name
+             `((defun ,emitter-name (segment ,@args)
+                  (emit-byte segment (,name ,@args)))))))))
 
 ;; more options to be defined here... more general than necessary for now
 (defmacro define-instruction (name lambda-list &rest options)
