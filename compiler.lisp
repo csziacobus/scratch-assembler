@@ -42,6 +42,8 @@
   (defun instruction-emitter-function (name)
     (gethash name instruction-emitters)))
 
+;; Define a bitfield layout with the byte specifications listed by byte-spec
+;; An emitter for the byte specification is named by the keyword :emitter.
 (defmacro define-bitfield-layout (name &rest byte-specs)
   (let (emitter-name args)
     (dolist (byte-spec byte-specs)
@@ -187,6 +189,7 @@
          (t (emit-inst segment 'movl dest (ldb (byte 8 0) src))
             (emit-inst segment 'movh dest (ldb (byte 8 8) src))))))
 
+;; "derived" instructions
 (define-instruction push (segment reg)
   (:emitter
    (emit-inst 'mov segment '(@+ %sp 0) reg)
