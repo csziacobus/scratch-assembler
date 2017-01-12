@@ -58,7 +58,7 @@
          (defun ,name ,args
            (let ((byte 0))
              ,@(mapcar (lambda (byte-spec arg) `(setf (ldb ,byte-spec byte) ,arg))
-                       byte-specs args)
+                       (remove-if-not (lambda (x) (eq (first x) 'byte)) byte-specs) args)
              byte))
          ,@(when emitter-name
              `((defun ,emitter-name (segment ,@args)
