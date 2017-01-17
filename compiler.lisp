@@ -105,6 +105,11 @@
                          (+ 256 immediate)
                          immediate)))
 
+(defun emit-word (segment word)
+  (check-type word immediate)
+  (emit-byte segment (ldb (byte 8 8) word))
+  (emit-byte segment (ldb (byte 8 0) word)))
+
 (defun memory-reference-p (x)
   (and (listp x) (eq (first x) '@+)))
 
@@ -131,7 +136,7 @@
              `(define-instruction ,name (segment dest src)
                 (:emitter
                  (emit-opcode-with-reg segment ,opcode (register-encoding dest))
-                 (emit-reg segment (register-encoding src))))))
+                 (emit-byte-reg segment (register-encoding src))))))
   (define-immediate-to-reg andl #b00001)
   (define-immediate-to-reg andh #b00010)
   (define-immediate-to-reg orl #b00011)
@@ -169,8 +174,7 @@
 (define-instruction mov (segment dest src)
   (:emitter
    (cond ((and (registerp dest) (registerp src))
-          (emit-opcode-with-reg segment #b00000 (register-encoding dest))
-          (emit-reg segment (register-encoding src)))
+	  (emit-inst segment 'and dest src src))
          ((and (memory-reference-p dest) (registerp src))
           (multiple-value-bind (reg offset)
               (parse-memory-reference dest)
@@ -212,6 +216,7 @@
       (case (first instruction)
         (.label (emit-label segment (second instruction)))
         (.print (print (second instruction)))
+	(.word (emit-word segment (second instruction)))
         (otherwise
          (when compute-labels-p
            (emit-label segment (second instruction)))
