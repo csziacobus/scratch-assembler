@@ -71,7 +71,9 @@
                      (lambda (%%segment%% ,@lambda-list)
                        (flet ((emit (&rest bytes)
                                 (dolist (byte bytes)
-                                  (emit-byte %%segment%% byte))))
+                                  (emit-byte %%segment%% byte)))
+                              (inst (&rest args)
+                                (apply 'emit-inst %%segment%% args)))
                          ,@args))))))))
 
 ;; register
@@ -167,7 +169,7 @@
 (define-instruction mov (dest src)
   (:emitter
    (cond ((and (registerp dest) (registerp src))
-	  (emit-inst %%segment%% 'and dest src src))
+	  (inst 'and dest src src))
          ((and (memory-reference-p dest) (registerp src))
           (multiple-value-bind (reg offset)
               (parse-memory-reference dest)
@@ -182,14 +184,14 @@
                                             (register-encoding dest)
                                             (register-encoding reg))
                   (byte-immediate offset))))
-         (t (emit-inst %%segment%% 'movl dest (ldb (byte 8 0) src))
-            (emit-inst %%segment%% 'movh dest (ldb (byte 8 8) src))))))
+         (t (inst 'movl dest (ldb (byte 8 0) src))
+            (inst 'movh dest (ldb (byte 8 8) src))))))
 
 ;; "derived" instructions
 (define-instruction push (reg)
   (:emitter
-   (emit-inst 'mov %%segment%% '(@+ %sp 0) reg)
-   (emit-inst 'add %%segment%% '%sp -1)))
+   (inst 'mov '(@+ %sp 0) reg)
+   (inst 'add '%sp -1)))
 
 ;; assembler
 ;; labels support
