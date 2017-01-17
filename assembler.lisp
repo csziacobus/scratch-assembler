@@ -31,7 +31,7 @@
 (defun segment-current-instruction-address (segment)
   (multiple-value-bind (q r)
       ;; FIXME magic number
-      (floor (print (fill-pointer (print (segment-buffer segment)))) 2)
+      (floor (fill-pointer (segment-buffer segment)) 2)
     (assert (zerop r))
     q))
 
@@ -43,7 +43,6 @@
     (gethash name instruction-emitters)))
 
 ;; Define a bitfield layout with the byte specifications listed by byte-spec
-;; An emitter for the byte specification is named by the keyword :emitter.
 (defmacro define-bitfield-layout (name &rest byte-specs)
   (let (args)
     (dolist (byte-spec byte-specs)
@@ -56,7 +55,7 @@
          (defun ,name ,args
            (let ((byte 0))
              ,@(mapcar (lambda (byte-spec arg) `(setf (ldb ,byte-spec byte) ,arg))
-                       (remove-if-not (lambda (x) (eq (first x) 'byte)) byte-specs) args)
+                       byte-specs args)
              byte))))))
 
 ;; more options to be defined here... more general than necessary for now
