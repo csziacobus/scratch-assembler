@@ -45,24 +45,19 @@
 ;; Define a bitfield layout with the byte specifications listed by byte-spec
 ;; An emitter for the byte specification is named by the keyword :emitter.
 (defmacro define-bitfield-layout (name &rest byte-specs)
-  (let (emitter-name args)
+  (let (args)
     (dolist (byte-spec byte-specs)
-      (if (and (listp byte-spec) (eq (first byte-spec) :emitter))
-          (setf emitter-name (second byte-spec))
-          (push (alexandria:symbolicate
-                 "BYTE-" (write-to-string (second byte-spec))
-                 "-" (write-to-string (third byte-spec)))
-                args)))
+      (push (alexandria:symbolicate
+             "BYTE-" (write-to-string (second byte-spec))
+             "-" (write-to-string (third byte-spec)))
+            args))
     (let ((args (nreverse args)))
       `(progn
          (defun ,name ,args
            (let ((byte 0))
              ,@(mapcar (lambda (byte-spec arg) `(setf (ldb ,byte-spec byte) ,arg))
                        (remove-if-not (lambda (x) (eq (first x) 'byte)) byte-specs) args)
-             byte))
-         ,@(when emitter-name
-             `((defun ,emitter-name (segment ,@args)
-                  (emit-byte segment (,name ,@args)))))))))
+             byte))))))
 
 ;; more options to be defined here... more general than necessary for now
 (defmacro define-instruction (name lambda-list &rest options)
@@ -72,7 +67,12 @@
             (values (first option-spec) (rest option-spec))
             (values option-spec nil))
       (ecase option
-        (:emitter `(%define-instruction-emitter ',name (lambda ,lambda-list ,@args)))))))
+        (:emitter `(%define-instruction-emitter ',name
+                     (lambda (%%segment%% ,@lambda-list)
+                       (flet ((emit (&rest bytes)
+                                (dolist (byte bytes)
+                                  (emit-byte %%segment%% byte))))
+                         ,@args))))))))
 
 ;; register
 (defparameter +register-encoding-map+
@@ -87,23 +87,17 @@
 (defun immediatep (x) (typep x 'immediate))
 
 (define-bitfield-layout byte-opcode-with-reg
-    (byte 5 3) (byte 3 0)
-  (:emitter emit-opcode-with-reg))
+    (byte 5 3) (byte 3 0))
 (define-bitfield-layout byte-reg
-    (byte 3 5)
-  (:emitter emit-byte-reg))
+    (byte 3 5))
 (define-bitfield-layout byte-reg-reg
-    (byte 3 5) (byte 3 2)
-  (:emitter emit-reg-reg))
+    (byte 3 5) (byte 3 2))
 (define-bitfield-layout byte-opcode-with-reg-reg
-    (byte 2 6) (byte 3 3) (byte 3 0)
-  (:emitter emit-opcode-with-reg-reg))
+    (byte 2 6) (byte 3 3) (byte 3 0))
 
-(defun emit-immediate (segment immediate)
+(defun byte-immediate (immediate)
   (check-type immediate immediate)
-  (emit-byte segment (if (minusp immediate)
-                         (+ 256 immediate)
-                         immediate)))
+  (if (minusp immediate) (+ 256 immediate) immediate))
 
 (defun emit-word (segment word)
   (check-type word immediate)
@@ -128,15 +122,15 @@
 
 ;; Too much code repetition still below; emitterse look roughly same
 (macrolet ((define-immediate-to-reg (name opcode)
-             `(define-instruction ,name (segment dest immediate)
+             `(define-instruction ,name (dest immediate)
                 (:emitter
-                 (emit-opcode-with-reg segment ,opcode (register-encoding dest))
-                 (emit-immediate segment immediate))))
+                 (emit (byte-opcode-with-reg ,opcode (register-encoding dest))
+                       (byte-immediate immediate)))))
            (define-reg-to-reg (name opcode)
-             `(define-instruction ,name (segment dest src)
+             `(define-instruction ,name (dest src)
                 (:emitter
-                 (emit-opcode-with-reg segment ,opcode (register-encoding dest))
-                 (emit-byte-reg segment (register-encoding src))))))
+                 (emit (byte-opcode-with-reg ,opcode (register-encoding dest))
+                       (byte-reg (register-encoding src)))))))
   (define-immediate-to-reg andl #b00001)
   (define-immediate-to-reg andh #b00010)
   (define-immediate-to-reg orl #b00011)
@@ -145,60 +139,57 @@
   (define-immediate-to-reg movh #b00110)
   (define-reg-to-reg not #b01000))
 
-(define-instruction brnz (segment reg absolute-address)
+(define-instruction brnz (reg absolute-address)
   (:emitter
    ;; we want to emit a relative address offset. calculate that now
    ;; because emitting a byte will chagne the address (KLUDGE)
-   (let ((relative-offset (- absolute-address (segment-current-instruction-address segment))))
-     (emit-opcode-with-reg segment #b00111 (register-encoding reg))
-     (emit-immediate segment relative-offset))))
+   (let ((relative-offset (- absolute-address (segment-current-instruction-address %%segment%%))))
+     (emit (byte-opcode-with-reg #b00111 (register-encoding reg))
+           (byte-immediate relative-offset)))))
 
-(define-instruction add (segment dest arg1 &optional arg2)
+(define-instruction add (dest arg1 &optional arg2)
   (:emitter
    (cond (arg2
-          (emit-opcode-with-reg segment #b01001 (register-encoding dest))
-          (emit-reg-reg segment (register-encoding arg1) (register-encoding arg2)))
+          (emit (byte-opcode-with-reg #b01001 (register-encoding dest))
+                (byte-reg-reg (register-encoding arg1) (register-encoding arg2))))
          (t
-          (emit-opcode-with-reg segment #b00000 (register-encoding dest))
-          (emit-immediate segment arg1)))))
+          (emit (byte-opcode-with-reg #b00000 (register-encoding dest))
+                (byte-immediate arg1))))))
 
 (macrolet ((def (name opcode)
-             `(define-instruction ,name (segment reg1 reg2 reg3)
+             `(define-instruction ,name (reg1 reg2 reg3)
                 (:emitter
-                 (emit-opcode-with-reg segment ,opcode (register-encoding reg1))
-                 (emit-reg-reg segment (register-encoding reg2)
-                               (register-encoding reg3))))))
+                 (emit (byte-opcode-with-reg ,opcode (register-encoding reg1))
+                       (byte-reg-reg (register-encoding reg2) (register-encoding reg3)))))))
   (def and #b01010)
   (def or #b01011))
 
-(define-instruction mov (segment dest src)
+(define-instruction mov (dest src)
   (:emitter
    (cond ((and (registerp dest) (registerp src))
-	  (emit-inst segment 'and dest src src))
+	  (emit-inst %%segment%% 'and dest src src))
          ((and (memory-reference-p dest) (registerp src))
           (multiple-value-bind (reg offset)
               (parse-memory-reference dest)
-            (emit-opcode-with-reg-reg segment
-                                      #b10
-                                      (register-encoding reg)
-                                      (register-encoding src))
-            (emit-immediate segment offset)))
+            (emit (byte-opcode-with-reg-reg #b10
+                                            (register-encoding reg)
+                                            (register-encoding src))
+                  (byte-immediate offset))))
          ((and (memory-reference-p src) (registerp dest))
           (multiple-value-bind (reg offset)
               (parse-memory-reference src)
-            (emit-opcode-with-reg-reg segment
-                                      #b11
-                                      (register-encoding dest)
-                                      (register-encoding reg))
-            (emit-immediate segment offset)))
-         (t (emit-inst segment 'movl dest (ldb (byte 8 0) src))
-            (emit-inst segment 'movh dest (ldb (byte 8 8) src))))))
+            (emit (byte-opcode-with-reg-reg #b11
+                                            (register-encoding dest)
+                                            (register-encoding reg))
+                  (byte-immediate offset))))
+         (t (emit-inst %%segment%% 'movl dest (ldb (byte 8 0) src))
+            (emit-inst %%segment%% 'movh dest (ldb (byte 8 8) src))))))
 
 ;; "derived" instructions
-(define-instruction push (segment reg)
+(define-instruction push (reg)
   (:emitter
-   (emit-inst 'mov segment '(@+ %sp 0) reg)
-   (emit-inst 'add segment '%sp -1)))
+   (emit-inst 'mov %%segment%% '(@+ %sp 0) reg)
+   (emit-inst 'add %%segment%% '%sp -1)))
 
 ;; assembler
 ;; labels support
