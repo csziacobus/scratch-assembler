@@ -13,13 +13,17 @@
 (deftype assembly-unit () '(unsigned-byte 8))
 (defclass segment ()
   ((buffer :initarg :buffer :reader segment-buffer)
-   (label-map :accessor segment-label-map :initarg :label-map)))
+   (label-map :accessor segment-label-map :initarg :label-map)
+   (program-counter :accessor segment-program-counter :initarg :program-counter)))
 (defun make-segment
     (&optional (buffer (make-array 0 :element-type 'assembly-unit
                                      :adjustable t
                                      :fill-pointer 0))
-               (label-map (make-hash-table)))
-  (make-instance 'segment :buffer buffer :label-map label-map))
+               (label-map (make-hash-table))
+               (program-counter 0))
+  (make-instance 'segment :buffer buffer
+                          :label-map label-map
+                          :program-counter program-counter))
 (defun emit-byte (segment byte)
   (vector-push-extend byte (segment-buffer segment))
   (values))
@@ -27,13 +31,6 @@
 (defun emit-label (segment label)
   (setf (gethash label (segment-label-map segment))
         (segment-current-instruction-address segment)))
-
-(defun segment-current-instruction-address (segment)
-  (multiple-value-bind (q r)
-      ;; FIXME magic number
-      (floor (fill-pointer (segment-buffer segment)) 2)
-    (assert (zerop r))
-    q))
 
 ;; Define instruction machinery
 (let ((instruction-emitters (make-hash-table)))
@@ -51,12 +48,11 @@
              "-" (write-to-string (third byte-spec)))
             args))
     (let ((args (nreverse args)))
-      `(progn
-         (defun ,name ,args
-           (let ((byte 0))
-             ,@(mapcar (lambda (byte-spec arg) `(setf (ldb ,byte-spec byte) ,arg))
-                       byte-specs args)
-             byte))))))
+      `(defun ,name ,args
+         (let ((byte 0))
+           ,@(mapcar (lambda (byte-spec arg) `(setf (ldb ,byte-spec byte) ,arg))
+                     byte-specs args)
+           byte)))))
 
 ;; more options to be defined here... more general than necessary for now
 (defmacro define-instruction (name lambda-list &rest options)
@@ -70,7 +66,8 @@
                      (lambda (%%segment%% ,@lambda-list)
                        (flet ((emit (&rest bytes)
                                 (dolist (byte bytes)
-                                  (emit-byte %%segment%% byte)))
+                                  (emit-byte %%segment%% byte))
+                                (incf (segment-program-counter %%segment%%)))
                               (inst (&rest args)
                                 (apply 'emit-inst %%segment%% args)))
                          ,@args))))))))
@@ -142,9 +139,7 @@
 
 (define-instruction brnz (reg absolute-address)
   (:emitter
-   ;; we want to emit a relative address offset. calculate that now
-   ;; because emitting a byte will chagne the address (KLUDGE)
-   (let ((relative-offset (- absolute-address (segment-current-instruction-address %%segment%%))))
+   (let ((relative-offset (- absolute-address (segment-program-counter %%segment%%))))
      (emit (byte-opcode-with-reg #b00111 (register-encoding reg))
            (byte-immediate relative-offset)))))
 
